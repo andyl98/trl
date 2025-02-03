@@ -74,6 +74,8 @@ class GRPOConfig(TrainingArguments):
         per_device_train_batch_size (`int`, *optional*, defaults to `1`):
             Number of prompts sampled per device for training. The actual batch passed into the model will be this
             value multiplied by `num_generations`.
+        logit_computation_mini_batch_size (`int`, *optional*, defaults to `0`):
+            Number of rows of the logit tensor to process at a time. 0 means no mini-batching, which is the default.
         gradient_accumulation_steps (`int`, *optional*, defaults to `8`):
             Number of updates steps to accumulate the gradients for, before performing a backward/update pass.
         beta (`float`, *optional*, defaults to `0.04`):
@@ -161,6 +163,13 @@ class GRPOConfig(TrainingArguments):
         metadata={
             "help": "Number of prompts sampled per device for training. The actual batch passed into the model will "
             "be this value multiplied by `num_generations`."
+        },
+    )
+    logit_computation_mini_batch_size: int = field(
+        default=0,
+        metadata={
+            "help": "Number of rows of the logit tensor to process at a time. 0 means no mini-batching, which is the "
+            "default."
         },
     )
     gradient_accumulation_steps: int = field(

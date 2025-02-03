@@ -77,7 +77,37 @@ class GRPOTrainer(Trainer):
         model="Qwen/Qwen2-0.5B-Instruct",
         reward_funcs="weqweasdas/RM-Gemma-2B",
         train_dataset=dataset,
-    )
+    )def get_per_token_logps_iter(model, input_ids, num_logits_to_keep, mini_batch_size = 100):
+    # We'll store the output logits for each row.
+    all_logits = []
+    B = input_ids.size(0)
+
+    # Process each row one-by-one.
+    for i in range(0, B, mini_batch_size):
+        # Select one row at a time.
+        mini_batch_input_ids = input_ids[i:i+mini_batch_size, :]           # shape: [B_mini, L]
+
+        # Compute logits for this single row.
+        # We request num_logits_to_keep + 1 because later we will drop the final token's logits.
+        row_logits = model(
+            input_ids=mini_batch_input_ids,
+            num_logits_to_keep=num_logits_to_keep + 1
+        ).logits  # shape: [B_mini, L, V]
+
+        # Append the result.
+        all_logits.append(row_logits)
+
+    # Concatenate all the rows back into a single tensor.
+    logits = torch.cat(all_logits, dim=0)  # shape: [B, L-1, V]
+    logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
+
+    per_token_logps = []
+    for logits_row, input_ids_row in zip(logits, input_ids[:, -num_logits_to_keep:]):
+        log_probs = logits_row.log_softmax(dim=-1)
+        token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
+        per_token_logps.append(token_log_prob)
+    return torch.stack(per_token_logps)
+
 
     trainer.train()
     ```
@@ -454,18 +484,52 @@ class GRPOTrainer(Trainer):
                 per_token_logps.append(token_log_prob)
             return torch.stack(per_token_logps)
 
+        def get_per_token_logps_iter(model, input_ids, num_logits_to_keep, mini_batch_size=4):
+            # We'll store the output logits for each row.
+            all_logits = []
+            B = input_ids.size(0)
+
+            # Process each row one-by-one.
+            for i in range(0, B, mini_batch_size):
+                # Select one row at a time.
+                mini_batch_input_ids = input_ids[i : i + mini_batch_size, :]  # shape: [B_mini, L]
+
+                # Compute logits for this single row.
+                # We request num_logits_to_keep + 1 because later we will drop the final token's logits.
+                row_logits = model(
+                    input_ids=mini_batch_input_ids, num_logits_to_keep=num_logits_to_keep + 1
+                ).logits  # shape: [B_mini, L, V]
+
+                # Append the result.
+                all_logits.append(row_logits)
+
+            # Concatenate all the rows back into a single tensor.
+            logits = torch.cat(all_logits, dim=0)  # shape: [B, L-1, V]
+            logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
+
+            per_token_logps = []
+            for logits_row, input_ids_row in zip(logits, input_ids[:, -num_logits_to_keep:]):
+                log_probs = logits_row.log_softmax(dim=-1)
+                token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
+                per_token_logps.append(token_log_prob)
+            return torch.stack(per_token_logps)
+
+        logit_processing_func = (
+            get_per_token_logps if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps_iter
+        )
+
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
-        per_token_logps = get_per_token_logps(model, prompt_completion_ids, attention_mask, logits_to_keep)
+        per_token_logps = logit_processing_func(model, prompt_completion_ids, attention_mask, logits_to_keep)
 
         with torch.inference_mode():
             if self.ref_model is not None:
                 ref_per_token_logps = get_per_token_logps(
-                    self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
+                    self.ref_model, logit_processing_func, attention_mask, logits_to_keep
                 )
             else:
                 with self.accelerator.unwrap_model(model).disable_adapter():
                     ref_per_token_logps = get_per_token_logps(
-                        model, prompt_completion_ids, attention_mask, logits_to_keep
+                        model, logit_processing_func, attention_mask, logits_to_keep
                     )
 
         # Compute the KL divergence between the model and the reference model
