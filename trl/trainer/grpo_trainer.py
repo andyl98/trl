@@ -530,13 +530,13 @@ class GRPOTrainer(Trainer):
 
         with torch.inference_mode():
             if self.ref_model is not None:
-                ref_per_token_logps = get_per_token_logps(
-                    self.ref_model, logit_processing_func, attention_mask, logits_to_keep
+                ref_per_token_logps = logit_processing_func(
+                    self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
                 )
             else:
                 with self.accelerator.unwrap_model(model).disable_adapter():
-                    ref_per_token_logps = get_per_token_logps(
-                        model, logit_processing_func, attention_mask, logits_to_keep
+                    ref_per_token_logps = logit_processing_func(
+                        model, prompt_completion_ids, attention_mask, logits_to_keep
                     )
 
         # Compute the KL divergence between the model and the reference model
