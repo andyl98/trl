@@ -485,39 +485,35 @@ class GRPOTrainer(Trainer):
             return torch.stack(per_token_logps)
 
         def get_per_token_logps_iter(model, input_ids, attention_mask, logits_to_keep):
-            # We'll store the output logits for each row.
-            all_logits = []
-
             B = input_ids.size(0)
-            B_mini = self.args.logit_computation_mini_batch_size
-
-            # Process each row one-by-one.
-            for i in range(0, B, B_mini):
-                # Select one row at a time.
-                mini_batch_input_ids = input_ids[i : i + B_mini, :]  # shape: [B_mini, L]
-                mini_batch_attention_mask = attention_mask[i : i + B_mini, :]  # shape: [B_mini, L]
-
-                # Compute logits for this single row.
-                # We request num_logits_to_keep + 1 because later we will drop the final token's logits.
-                row_logits = model(
-                    input_ids=mini_batch_input_ids,
-                    attention_mask=mini_batch_attention_mask,
-                    logits_to_keep=logits_to_keep + 1,
-                ).logits  # (B_mini, L, V)
-
-                # Append the result.
-                all_logits.append(row_logits)
-
-            # Concatenate all the rows back into a single tensor.
-            logits = torch.cat(all_logits, dim=0)  # shape: [B, L-1, V]
-            logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-
+            mini_batch_size = self.args.logit_computation_mini_batch_size
             per_token_logps = []
-            for logits_row, input_ids_row in zip(logits, input_ids[:, -logits_to_keep:]):
-                log_probs = logits_row.log_softmax(dim=-1)
-                token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
-                per_token_logps.append(token_log_prob)
-            return torch.stack(per_token_logps)
+
+            for i in range(0, B, mini_batch_size):
+                mini_batch_input_ids = input_ids[i : i + mini_batch_size, :]  # shape: [mini_batch_size, L]
+                mini_batch_attention_mask = attention_mask[i : i + mini_batch_size, :]  # shape: [mini_batch_size, L]
+
+                mini_batch_log_probs = (
+                    model(
+                        input_ids=mini_batch_input_ids,
+                        attention_mask=mini_batch_attention_mask,
+                        logits_to_keep=logits_to_keep + 1,
+                    )
+                    .logits[:, -logits_to_keep - 1 : -1]
+                    .log_softmax(dim=-1)
+                )  # exclude the last logit and apply log_softmax
+
+                mini_batch_token_index = mini_batch_input_ids[:, -logits_to_keep:].unsqueeze(
+                    -1
+                )  # shape: [mini_batch_size, L, 1]
+                mini_batch_token_log_prob = torch.gather(
+                    mini_batch_log_probs, dim=-1, index=mini_batch_token_index
+                ).squeeze(-1)
+
+                del mini_batch_log_probs
+                per_token_logps.append(mini_batch_token_log_prob)
+
+            return torch.cat(per_token_logps, dim=0)
 
         logit_processing_func = (
             get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
