@@ -520,7 +520,7 @@ class GRPOTrainer(Trainer):
             return torch.stack(per_token_logps)
 
         logit_processing_func = (
-            get_per_token_logps if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps_iter
+            get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
         )
 
         print(f"Using {logit_processing_func.__name__} for logit computation.")
