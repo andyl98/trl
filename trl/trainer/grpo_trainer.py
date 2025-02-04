@@ -415,6 +415,8 @@ class GRPOTrainer(Trainer):
             prompt_inputs["attention_mask"] = prompt_inputs["attention_mask"][:, -self.max_prompt_length :]
 
         # Generate completions using either vLLM or regular generation
+        
+        start = time.perf_counter()
         if self.args.use_vllm:
             # First, have main process load weights if needed
             if self.state.global_step != self._last_loaded_step:
@@ -453,6 +455,9 @@ class GRPOTrainer(Trainer):
                 prompt_completion_ids = unwrapped_model.generate(
                     **prompt_inputs, generation_config=self.generation_config
                 )
+        end = time.perf_counter()
+        if self.accelerator.is_main_process:
+            print(f"Generation took {end - start:0.4f} seconds")
 
         # Compute prompt length and extract completion ids
         prompt_length = prompt_inputs["input_ids"].size(1)
