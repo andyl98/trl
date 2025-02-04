@@ -76,6 +76,8 @@ class GRPOConfig(TrainingArguments):
             value multiplied by `num_generations`.
         logit_computation_mini_batch_size (`int`, *optional*, defaults to `0`):
             Number of rows of the logit tensor to process at a time. 0 means no mini-batching, which is the default.
+        use_prompt_cache_for_logit_processing (`bool`, *optional*, defaults to `False`):
+            Whether to use the prompt cache to speed up logit processing. If set to True, the prompt cache will be used.
         gradient_accumulation_steps (`int`, *optional*, defaults to `8`):
             Number of updates steps to accumulate the gradients for, before performing a backward/update pass.
         beta (`float`, *optional*, defaults to `0.04`):
@@ -170,6 +172,13 @@ class GRPOConfig(TrainingArguments):
         metadata={
             "help": "Number of rows of the logit tensor to process at a time. 0 means no mini-batching, which is the "
             "default."
+        },
+    )
+    use_prompt_cache_for_logit_processing: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use the prompt cache to speed up logit processing. If set to True, the prompt cache "
+            "will be used to store the prompts and their corresponding logits. This will reduce memory usage."
         },
     )
     gradient_accumulation_steps: int = field(

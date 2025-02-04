@@ -44,7 +44,7 @@ from ..data_utils import apply_chat_template, is_conversational, maybe_apply_cha
 from ..import_utils import is_vllm_available
 from ..models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
 from .grpo_config import GRPOConfig
-from .utils import generate_model_card, get_comet_experiment_url, pad
+from .utils import compute_logps_with_prompt_cache, generate_model_card, get_comet_experiment_url, pad
 
 
 if is_peft_available():
@@ -415,7 +415,7 @@ class GRPOTrainer(Trainer):
             prompt_inputs["attention_mask"] = prompt_inputs["attention_mask"][:, -self.max_prompt_length :]
 
         # Generate completions using either vLLM or regular generation
-        
+
         start = time.perf_counter()
         if self.args.use_vllm:
             # First, have main process load weights if needed
@@ -531,24 +531,51 @@ class GRPOTrainer(Trainer):
                 print(f"get_per_token_logps_iter took {end_time - start_time:0.4f} seconds")
             return torch.cat(per_token_logps, dim=0)
 
-        logit_processing_func = (
-            get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
-        )
-
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
-        per_token_logps = logit_processing_func(model, prompt_completion_ids, attention_mask, logits_to_keep)
 
-        with torch.inference_mode():
-            if self.ref_model is not None:
-                ref_per_token_logps = logit_processing_func(
-                    self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
-                )
-            else:
-                with self.accelerator.unwrap_model(model).disable_adapter():
+        if self.args.use_prompt_cache_for_logit_processing:
+            logit_processing_func = (
+                get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
+            )
+            per_token_logps = logit_processing_func(model, prompt_completion_ids, attention_mask, logits_to_keep)
+
+            with torch.inference_mode():
+                if self.ref_model is not None:
                     ref_per_token_logps = logit_processing_func(
-                        model, prompt_completion_ids, attention_mask, logits_to_keep
+                        self.ref_model, prompt_completion_ids, attention_mask, logits_to_keep
                     )
+                else:
+                    with self.accelerator.unwrap_model(model).disable_adapter():
+                        ref_per_token_logps = logit_processing_func(
+                            model, prompt_completion_ids, attention_mask, logits_to_keep
+                        )
+        else:
+            per_token_logps = compute_logps_with_prompt_cache(
+                model=model,
+                prompt_inputs=prompt_inputs,
+                completion_ids=completion_ids,
+                mini_batch_size=self.args.logit_computation_mini_batch_size,
+                requires_grad_for_completion=True,
+            )
 
+            with torch.inference_mode():
+                if self.ref_model is not None:
+                    ref_per_token_logps = compute_logps_with_prompt_cache(
+                        model=self.ref_model,
+                        prompt_inputs=prompt_inputs,
+                        completion_ids=completion_ids,
+                        mini_batch_size=self.args.logit_computation_mini_batch_size,
+                        requires_grad_for_completion=False,
+                    )
+                else:
+                    with self.accelerator.unwrap_model(model).disable_adapter():
+                        ref_per_token_logps = compute_logps_with_prompt_cache(
+                            model=model,
+                            prompt_inputs=prompt_inputs,
+                            completion_ids=completion_ids,
+                            mini_batch_size=self.args.logit_computation_mini_batch_size,
+                            requires_grad_for_completion=False,
+                        )
         # Compute the KL divergence between the model and the reference model
         per_token_kl = torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
 
