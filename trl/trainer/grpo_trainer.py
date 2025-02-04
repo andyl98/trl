@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Any, Callable, Optional, Union
 from unittest.mock import patch
 
+import time
 import torch
 import torch.utils.data
 import transformers
@@ -470,6 +471,8 @@ class GRPOTrainer(Trainer):
 
         # Get the per-token log probabilities for the completions for the model and the reference model
         def get_per_token_logps(model, input_ids, attention_mask, logits_to_keep):
+            start_time = time.perf_counter()
+
             # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
             logits = model(
                 input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep + 1
@@ -482,12 +485,17 @@ class GRPOTrainer(Trainer):
                 log_probs = logits_row.log_softmax(dim=-1)
                 token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
                 per_token_logps.append(token_log_prob)
+
+            end_time = time.perf_counter()
+            if self.accelerator.is_main_process:
+                print(f"get_per_token_logps took {end_time - start_time:0.4f} seconds")
             return torch.stack(per_token_logps)
 
         def get_per_token_logps_iter(model, input_ids, attention_mask, logits_to_keep):
             B = input_ids.size(0)
             mini_batch_size = self.args.logit_computation_mini_batch_size
             per_token_logps = []
+            start_time = time.perf_counter()
 
             for i in range(0, B, mini_batch_size):
                 mini_batch_input_ids = input_ids[i : i + mini_batch_size, :]  # shape: [mini_batch_size, L]
@@ -513,13 +521,14 @@ class GRPOTrainer(Trainer):
                 del mini_batch_log_probs
                 per_token_logps.append(mini_batch_token_log_prob)
 
+            end_time = time.perf_counter()
+            if self.accelerator.is_main_process:
+                print(f"get_per_token_logps_iter took {end_time - start_time:0.4f} seconds")
             return torch.cat(per_token_logps, dim=0)
 
         logit_processing_func = (
             get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
         )
-
-        print(f"Using {logit_processing_func.__name__} for logit computation.")
 
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
         per_token_logps = logit_processing_func(model, prompt_completion_ids, attention_mask, logits_to_keep)
