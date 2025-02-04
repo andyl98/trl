@@ -533,7 +533,7 @@ class GRPOTrainer(Trainer):
 
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
 
-        if self.args.use_prompt_cache_for_logit_processing:
+        if self.args.use_prompt_cache_for_logit_processing == False:
             logit_processing_func = (
                 get_per_token_logps_iter if self.args.logit_computation_mini_batch_size != 0 else get_per_token_logps
             )
