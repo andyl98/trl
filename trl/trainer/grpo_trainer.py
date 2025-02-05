@@ -91,10 +91,16 @@ class vLLMActor:
         gpu_memory_utilization: float,
     ):
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        self.model_name = model
+        self.tensor_parallel_size = tensor_parallel_size
+        self.gpu_memory_utilization = gpu_memory_utilization
+        self.llm = None
+
+    def initialize(self):
         self.llm = LLM(
-            model=model,
-            tensor_parallel_size=tensor_parallel_size,
-            gpu_memory_utilization=gpu_memory_utilization,
+            model=self.model_name,
+            tensor_parallel_size=self.tensor_parallel_size,
+            gpu_memory_utilization=self.gpu_memory_utilization,
         )
 
     def generate(self, prompts, sampling_params):
@@ -389,6 +395,7 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
+                    print("Ray initialized")
 
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
@@ -396,9 +403,14 @@ class GRPOTrainer(Trainer):
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
+                    print("vLLM actor initialized")
+
+                    ray.get(self.vllm_actor.initialize.remote())
+                    print("vLLM actor LLM initialized")
 
                     # Block until the vLLM actor is fully loaded
                     ray.get(self.vllm_actor.ping.remote())
+                    print("vLLM actor ready")
 
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
