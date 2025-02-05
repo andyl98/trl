@@ -126,7 +126,7 @@ class vLLMActor:
         )
 
     def generate(self, prompts, sampling_params):
-        outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
+        outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
         return outputs
 
     def ping(self):
@@ -504,6 +504,9 @@ class GRPOTrainer(Trainer):
 
         # Generate completions using either vLLM or regular generation
         start_time = time.perf_counter()
+        
+        print("Generating completions...")
+
         if self.args.use_vllm:
             # First, have main process load weights if needed
             if self.state.global_step != self._last_loaded_step:
