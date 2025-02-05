@@ -369,7 +369,7 @@ class GRPOTrainer(Trainer):
                             print("Weights loaded successfully")
 
                     self.vllm_actor = vLLMActor.remote(
-                        model=model,
+                        model=model.name_or_path,
                         cuda_devices=vllm_cuda_visible_devices,
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
