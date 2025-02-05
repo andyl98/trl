@@ -331,14 +331,14 @@ class GRPOTrainer(Trainer):
                 else:
                     # The device must be sth like "i,j,..,k" -> a list of cuda indices
                     # Make sure the vllm_tensor_parallel_size matches the number of GPUs
-                    vllm_cuda_visible_devices = vllm_device.split(",")
-                    if len(vllm_cuda_visible_devices) != self.args.vllm_tensor_parallel_size:
+                    vllm_cuda_devices_len = len(vllm_device.split(","))
+                    if vllm_cuda_devices_len != self.args.vllm_tensor_parallel_size:
                         raise ValueError(
-                            f"The number of GPUs specified in `vllm_device` ({len(vllm_cuda_visible_devices)}) must "
+                            f"The number of GPUs specified in `vllm_device` ({vllm_cuda_devices_len}) must "
                             f"match the `vllm_tensor_parallel_size` ({self.args.vllm_tensor_parallel_size})."
                         )
 
-                    print(f"Multiple GPUs for vLLM tensor parallelism: {vllm_cuda_visible_devices}")
+                    print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
 
@@ -370,7 +370,7 @@ class GRPOTrainer(Trainer):
 
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
-                        cuda_devices=vllm_cuda_visible_devices,
+                        cuda_devices=vllm_device,
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
