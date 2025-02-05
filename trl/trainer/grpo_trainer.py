@@ -464,7 +464,7 @@ class GRPOTrainer(Trainer):
             # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
             all_prompts_text = gather_object(prompts_text)
             if self.accelerator.is_main_process:
-                if self.vllm_tensor_parallel_size == 1:
+                if self.args.vllm_tensor_parallel_size == 1:
                     outputs = self.llm.generate(all_prompts_text, sampling_params=self.sampling_params, use_tqdm=False)
                 else:
                     outputs = ray.get(
