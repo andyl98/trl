@@ -60,6 +60,10 @@ class GRPOConfig(TrainingArguments):
             Device where vLLM generation will run, e.g. `"cuda:1"`. If set to `"auto"` (default), the system will
             automatically select the next available GPU after the last one used for training. This assumes that
             training has not already occupied all available GPUs.
+            If the provided vllm_device is a str of format "i,j,...,k" (e.g. "4,5,6,7"), we will use the specified
+            multiple GPUs for vLLM tensor parallelism. The number of GPUs must equal to `vllm_tensor_parallel_size`.
+        vllm_tensor_parallel_size (`int`, *optional*, defaults to `1`):
+            Number of GPUs to use for vLLM tensor parallelism.
         vllm_gpu_memory_utilization (`float`, *optional*, defaults to `0.9`):
             Ratio (between 0 and 1) of GPU memory to reserve for the model weights, activations, and KV cache on the
             device dedicated to generation powered by vLLM. Higher values will increase the KV cache size and thus

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import ray
 import textwrap
 import warnings
 from collections import defaultdict
@@ -288,35 +289,82 @@ class GRPOTrainer(Trainer):
 
             if self.accelerator.is_main_process:
                 vllm_device = self.args.vllm_device
-                if vllm_device == "auto":
-                    vllm_device = f"cuda:{self.accelerator.num_processes}"  # take the next GPU idx
-                # Check that the requested device is available
-                if vllm_device.split(":")[0] == "cuda" and int(vllm_device.split(":")[1]) >= torch.cuda.device_count():
-                    raise ValueError(
-                        f"The requested device for vllm ({vllm_device}) is not available. You are likely using vLLM "
-                        "without restricting the number of GPUs for training. Set the `--num_processes` argument to a "
-                        "value lower than the number of GPUs available on your machine—typically, reducing it by one "
-                        f"is sufficient. In your case: `--num_processes {torch.cuda.device_count() - 1}`."
+                use_single_vllm_device = self.args.vllm_tensor_parallel_size == 1
+
+                # If the device is set to "auto", we automatically select the next available GPU
+                if use_single_vllm_device:
+                    if vllm_device == "auto":
+                        vllm_device = f"cuda:{self.accelerator.num_processes}"
+
+                    # Check that the requested device is available
+                    if (
+                        vllm_device.split(":")[0] == "cuda"
+                        and int(vllm_device.split(":")[1]) >= torch.cuda.device_count()
+                    ):
+                        raise ValueError(
+                            f"The requested device for vllm ({vllm_device}) is not available. You are likely using vLLM "
+                            "without restricting the number of GPUs for training. Set the `--num_processes` argument to a "
+                            "value lower than the number of GPUs available on your machine—typically, reducing it by one "
+                            f"is sufficient. In your case: `--num_processes {torch.cuda.device_count() - 1}`."
+                        )
+                    # Check that the requested device is not also used for training
+                    if vllm_device in {f"cuda:{idx}" for idx in range(self.accelerator.num_processes)}:
+                        warnings.warn(
+                            f"The requested device {vllm_device} is also used for training. This may lead to unexpected "
+                            "behavior. It is recommended to use a dedicated device for vLLM."
+                        )
+                    # vLLM is not compatible with accelerate. So we need to patch it to make sure we can (1) place the vLLM
+                    # model on the desired device (world_size_patch) and (2) avoid a test that is not designed for our
+                    # setting (profiling_patch).
+                    world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
+                    profiling_patch = patch(
+                        "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
+                        return_value=None,
                     )
-                # Check that the requested device is not also used for training
-                if vllm_device in {f"cuda:{idx}" for idx in range(self.accelerator.num_processes)}:
-                    warnings.warn(
-                        f"The requested device {vllm_device} is also used for training. This may lead to unexpected "
-                        "behavior. It is recommended to use a dedicated device for vLLM."
-                    )
-                # vLLM is not compatible with accelerate. So we need to patch it to make sure we can (1) place the vLLM
-                # model on the desired device (world_size_patch) and (2) avoid a test that is not designed for our
-                # setting (profiling_patch).
-                world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
-                profiling_patch = patch(
-                    "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling", return_value=None
-                )
-                with world_size_patch, profiling_patch:
-                    self.llm = LLM(
-                        model=model.name_or_path,
-                        device=vllm_device,
+                    with world_size_patch, profiling_patch:
+                        self.llm = LLM(
+                            model=model.name_or_path,
+                            device=vllm_device,
+                            gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
+                        )
+
+                else:
+                    # The device must be sth like "i,j,..,k" -> a list of cuda indices
+                    # Make sure the vllm_tensor_parallel_size matches the number of GPUs
+                    vllm_cuda_visible_devices = vllm_device.split(",")
+                    if len(vllm_cuda_visible_devices) != self.args.vllm_tensor_parallel_size:
+                        raise ValueError(
+                            f"The number of GPUs specified in `vllm_device` ({len(vllm_cuda_visible_devices)}) must "
+                            f"match the `vllm_tensor_parallel_size` ({self.args.vllm_tensor_parallel_size})."
+                        )
+
+                    print(f"Multiple GPUs for vLLM tensor parallelism: {vllm_cuda_visible_devices}")
+
+                    ray.init()
+
+                    @ray.remote
+                    class vLLMActor:
+                        def __init__(self, model: str, cuda_devices: str, tensor_parallel_size: int):
+                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+                            self.llm = LLM(model=model, tensor_parallel_size=tensor_parallel_size)
+
+                        def generate(self, prompts, sampling_params):
+                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
+                            return outputs
+
+                        def load_weights(self, state_dict):
+                            # Call load_weights on the model inside the actor.
+                            llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+                            llm_model.load_weights(state_dict.items())
+                            print("Weights loaded successfully")
+
+                    self.vllm_actor = vLLMActor.remote(
+                        model=model,
+                        cuda_devices=vllm_cuda_visible_devices,
+                        tensor_parallel_size=self.args.vllm_tensor_parallel_size,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
+
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
                     temperature=args.temperature,
@@ -392,15 +440,26 @@ class GRPOTrainer(Trainer):
             if self.state.global_step != self._last_loaded_step:
                 with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                     state_dict = unwrapped_model.state_dict()
-                if self.accelerator.is_main_process:
-                    llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
-                    llm_model.load_weights(state_dict.items())
+
+                if self.args.vllm_tensor_parallel_size == 1:
+                    if self.accelerator.is_main_process:
+                        llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+                        llm_model.load_weights(state_dict.items())
+                else:
+                    if self.accelerator.is_main_process:
+                        ray.get(self.vllm_actor.load_weights.remote(state_dict))
+
                 self._last_loaded_step = self.state.global_step
 
             # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
             all_prompts_text = gather_object(prompts_text)
             if self.accelerator.is_main_process:
-                outputs = self.llm.generate(all_prompts_text, sampling_params=self.sampling_params, use_tqdm=False)
+                if self.vllm_tensor_parallel_size == 1:
+                    outputs = self.llm.generate(all_prompts_text, sampling_params=self.sampling_params, use_tqdm=False)
+                else:
+                    outputs = ray.get(
+                        self.vllm_actor.generate.remote(all_prompts_text, sampling_params=self.sampling_params)
+                    )
                 completion_ids = [out.token_ids for completions in outputs for out in completions.outputs]
             else:
                 completion_ids = [None] * len(all_prompts_text) * self.num_generations
