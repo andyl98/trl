@@ -46,7 +46,6 @@ from ..import_utils import is_vllm_available
 from ..models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
 from .grpo_config import GRPOConfig
 from .utils import compute_logps_with_prompt_cache, generate_model_card, get_comet_experiment_url, pad
-from .ray_utils import vLLMActor
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -60,6 +59,55 @@ if is_wandb_available():
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
+
+
+@ray.remote
+class vLLMActor:
+    """
+    A Ray remote actor class for managing and interacting with a vLLM instance.
+
+    Attributes:
+        llm (LLM): An instance of the LLM class initialized with the provided parameters.
+
+    Methods:
+        __init__(model: str, cuda_devices: str, tensor_parallel_size: int, gpu_memory_utilization: float):
+            Initializes the vLLMActor with the specified model, CUDA devices, tensor parallel size, and GPU memory utilization.
+
+        generate(prompts, sampling_params):
+            Generates outputs from the LLM based on the provided prompts and sampling parameters.
+
+        ping():
+            Returns a readiness status message.
+
+        load_weights(state_dict):
+            Loads the model weights from the provided state dictionary.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        cuda_devices: str,
+        tensor_parallel_size: int,
+        gpu_memory_utilization: float,
+    ):
+        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        self.llm = LLM(
+            model=model,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+        )
+
+    def generate(self, prompts, sampling_params):
+        outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
+        return outputs
+
+    def ping(self):
+        return "ready"
+
+    def load_weights(self, state_dict):
+        llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
+        llm_model.load_weights(state_dict.items())
+        print("Weights loaded successfully")
 
 
 class GRPOTrainer(Trainer):
@@ -341,6 +389,7 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
+
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
