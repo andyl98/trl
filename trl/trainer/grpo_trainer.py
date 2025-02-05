@@ -568,7 +568,7 @@ class GRPOTrainer(Trainer):
                         model(
                             input_ids=mini_batch_input_ids,
                             attention_mask=mini_batch_attention_mask,
-                            logits_to_keep=logits_to_keep + 1,
+                            num_logits_to_keep=logits_to_keep + 1,
                         )
                         .logits[:, -logits_to_keep - 1 : -1]
                         .log_softmax(dim=-1)
@@ -584,7 +584,7 @@ class GRPOTrainer(Trainer):
                 model=model,
                 input_ids=prompt_completion_ids,
                 attention_mask=attention_mask,
-                logits_to_keep=logits_to_keep,
+                num_logits_to_keep=logits_to_keep,
                 mini_batch_size=mini_batch_size,
             )
 
@@ -594,7 +594,7 @@ class GRPOTrainer(Trainer):
                         model=self.ref_model,
                         input_ids=prompt_completion_ids,
                         attention_mask=attention_mask,
-                        logits_to_keep=logits_to_keep,
+                        num_logits_to_keep=logits_to_keep,
                         mini_batch_size=mini_batch_size,
                     )
                 else:
@@ -603,7 +603,7 @@ class GRPOTrainer(Trainer):
                             model=model,
                             input_ids=prompt_completion_ids,
                             attention_mask=attention_mask,
-                            logits_to_keep=logits_to_keep,
+                            num_logits_to_keep=logits_to_keep,
                             mini_batch_size=mini_batch_size,
                         )
 
