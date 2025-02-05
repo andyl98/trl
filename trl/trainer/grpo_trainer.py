@@ -40,6 +40,9 @@ from transformers import (
 )
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import is_peft_available
+from ray.util.placement_group import placement_group
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+
 
 from ..data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from ..import_utils import is_vllm_available
@@ -108,11 +111,11 @@ class vLLMActor:
             "TORCHELASTIC_RUN_ID",
             "TORCH_NCCL_ASYNC_ERROR_HANDLING",
             "TORCHELASTIC_ERROR_FILE",
-        ] 
+        ]
 
         for dist_key in dist_keys:
             del os.environ[dist_key]
-  
+
         self.model_name = model
         self.tensor_parallel_size = tensor_parallel_size
         self.gpu_memory_utilization = gpu_memory_utilization
@@ -419,7 +422,16 @@ class GRPOTrainer(Trainer):
                     ray.init()
                     print("Ray initialized")
 
-                    self.vllm_actor = vLLMActor.remote(
+                    # Create a placement group with one GPU and one CPU per bundle
+                    pg = placement_group(name="llm_pg", bundles=[{"GPU": 1, "CPU": 1}], strategy="STRICT_PACK")
+                    # Wait until the placement group is ready
+                    ray.get(pg.ready())
+
+                    self.vllm_actor = vLLMActor.options(
+                        scheduling_strategy=PlacementGroupSchedulingStrategy(
+                            placement_group=pg, placement_group_bundle_index=0
+                        )
+                    ).remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
@@ -504,7 +516,7 @@ class GRPOTrainer(Trainer):
 
         # Generate completions using either vLLM or regular generation
         start_time = time.perf_counter()
-        
+
         print("Generating completions...")
 
         if self.args.use_vllm:
@@ -575,7 +587,7 @@ class GRPOTrainer(Trainer):
         # Get the logit computation mini-batch size from the config
         mini_batch_size = self.args.logit_computation_mini_batch_size
         start_time = time.perf_counter()
-        
+
         if not self.gradient_checkpointing:
             # Current policy logprobs (with grad)
             per_token_logps = compute_logps_with_prompt_cache(
