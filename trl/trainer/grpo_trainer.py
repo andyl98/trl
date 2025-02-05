@@ -423,7 +423,7 @@ class GRPOTrainer(Trainer):
                     print("Ray initialized")
 
                     # Create a placement group with one GPU and one CPU per bundle
-                    pg = placement_group(name="llm_pg", bundles=[{"GPU": 1, "CPU": 1}], strategy="STRICT_PACK")
+                    pg = placement_group(name="llm_pg", bundles=[{"GPU": self.args.vllm_tensor_parallel_size, "CPU": 1}], strategy="STRICT_PACK")
                     # Wait until the placement group is ready
                     ray.get(pg.ready())
 
