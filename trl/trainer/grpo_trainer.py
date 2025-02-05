@@ -348,6 +348,9 @@ class GRPOTrainer(Trainer):
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
 
+                    # Block until the vLLM actor is fully loaded
+                    ray.get(self.vllm_actor.ping.remote())
+
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
                     temperature=args.temperature,
