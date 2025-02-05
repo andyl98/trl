@@ -40,9 +40,6 @@ from transformers import (
 )
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import is_peft_available
-from ray.util.placement_group import placement_group
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
-
 
 from ..data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from ..import_utils import is_vllm_available
@@ -422,16 +419,7 @@ class GRPOTrainer(Trainer):
                     ray.init()
                     print("Ray initialized")
 
-                    # Create a placement group with one GPU and one CPU per bundle
-                    pg = placement_group(name="llm_pg", bundles=[{"GPU": self.args.vllm_tensor_parallel_size, "CPU": 1}], strategy="STRICT_PACK")
-                    # Wait until the placement group is ready
-                    ray.get(pg.ready())
-
-                    self.vllm_actor = vLLMActor.options(
-                        scheduling_strategy=PlacementGroupSchedulingStrategy(
-                            placement_group=pg, placement_group_bundle_index=0
-                        )
-                    ).remote(
+                    self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
