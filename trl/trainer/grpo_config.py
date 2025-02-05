@@ -144,6 +144,12 @@ class GRPOConfig(TrainingArguments):
             "that training has not already occupied all available GPUs."
         },
     )
+    vllm_tensor_parallel_size: int = field(
+        default=1,
+        metadata={
+            "help": "Number of GPUs to use for vLLM tensor parallelism.",
+        },
+    )
     vllm_gpu_memory_utilization: float = field(
         default=0.9,
         metadata={
