@@ -91,6 +91,28 @@ class vLLMActor:
         gpu_memory_utilization: float,
     ):
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+
+        dist_keys = [
+            "RANK",
+            "LOCAL_RANK",
+            "WORLD_SIZE",
+            "LOCAL_WORLD_SIZE",
+            "GROUP_RANK",
+            "ROLE_RANK",
+            "ROLE_NAME",
+            "OMP_NUM_THREADS",
+            "MASTER_ADDR",
+            "MASTER_PORT",
+            "TORCHELASTIC_USE_AGENT_STORE",
+            "TORCHELASTIC_MAX_RESTARTS",
+            "TORCHELASTIC_RUN_ID",
+            "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+            "TORCHELASTIC_ERROR_FILE",
+        ] 
+
+        for dist_key in dist_keys:
+            del os.environ[dist_key]
+  
         self.model_name = model
         self.tensor_parallel_size = tensor_parallel_size
         self.gpu_memory_utilization = gpu_memory_utilization
