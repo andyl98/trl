@@ -46,7 +46,7 @@ from ..import_utils import is_vllm_available
 from ..models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
 from .grpo_config import GRPOConfig
 from .utils import compute_logps_with_prompt_cache, generate_model_card, get_comet_experiment_url, pad
-
+from .ray_utils import vLLMActor
 
 if is_peft_available():
     from peft import PeftConfig, get_peft_model
@@ -341,33 +341,6 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
-
-                    @ray.remote
-                    class vLLMActor:
-                        def __init__(
-                            self,
-                            model: str,
-                            cuda_devices: str,
-                            tensor_parallel_size: int,
-                            gpu_memory_utilization: float,
-                        ):
-                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
-                            self.llm = LLM(
-                                model=model,
-                                tensor_parallel_size=tensor_parallel_size,
-                                gpu_memory_utilization=gpu_memory_utilization,
-                            )
-
-                        def generate(self, prompts, sampling_params):
-                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
-                            return outputs
-
-                        def load_weights(self, state_dict):
-                            # Call load_weights on the model inside the actor.
-                            llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
-                            llm_model.load_weights(state_dict.items())
-                            print("Weights loaded successfully")
-
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
