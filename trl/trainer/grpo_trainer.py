@@ -74,8 +74,14 @@ def stateless_init_process_group(master_address, master_port, rank, world_size, 
     the data-plane communication (NCCL) between external (train processes)
     and vLLM workers.
     """
+    print("Creating process group")
     pg = StatelessProcessGroup.create(host=master_address, port=master_port, rank=rank, world_size=world_size)
+    print("Process group created")
+
+    print("Creating PyNcclCommunicator")
     pynccl = PyNcclCommunicator(pg, device=device)
+    print("PyNcclCommunicator created")
+    
     return pynccl
 
 
