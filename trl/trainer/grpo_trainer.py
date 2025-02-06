@@ -491,11 +491,17 @@ class GRPOTrainer(Trainer):
                         print("vLLM actor initialized")
 
                     else:
-                        self.llm = LLM(
-                            model=model.name_or_path,
-                            gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
-                            tensor_parallel_size=vllm_cuda_devices_len,
+                        world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
+                        profiling_patch = patch(
+                            "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
+                            return_value=None,
                         )
+                        with world_size_patch, profiling_patch:
+                            self.llm = LLM(
+                                model=model.name_or_path,
+                                gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
+                                tensor_parallel_size=vllm_cuda_devices_len,
+                            )
 
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
