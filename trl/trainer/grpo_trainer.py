@@ -65,77 +65,6 @@ if is_wandb_available():
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
-
-@ray.remote
-class vLLMActor:
-    """
-    A Ray remote actor class for managing and interacting with a vLLM instance.
-
-    Attributes:
-        llm (LLM): An instance of the LLM class initialized with the provided parameters.
-
-    Methods:
-        __init__(model: str, cuda_devices: str, tensor_parallel_size: int, gpu_memory_utilization: float):
-            Initializes the vLLMActor with the specified model, CUDA devices, tensor parallel size, and GPU memory utilization.
-
-        generate(prompts, sampling_params):
-            Generates outputs from the LLM based on the provided prompts and sampling parameters.
-
-        ping():
-            Returns a readiness status message.
-
-        load_weights(state_dict):
-            Loads the model weights from the provided state dictionary.
-    """
-
-    def __init__(
-        self,
-        model: str,
-        cuda_devices: str,
-        tensor_parallel_size: int,
-        gpu_memory_utilization: float,
-    ):
-        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
-
-        dist_keys = [
-            "RANK",
-            "LOCAL_RANK",
-            "WORLD_SIZE",
-            "LOCAL_WORLD_SIZE",
-            "GROUP_RANK",
-            "ROLE_RANK",
-            "ROLE_NAME",
-            "OMP_NUM_THREADS",
-            "MASTER_ADDR",
-            "MASTER_PORT",
-            "TORCHELASTIC_USE_AGENT_STORE",
-            "TORCHELASTIC_MAX_RESTARTS",
-            "TORCHELASTIC_RUN_ID",
-            "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-            "TORCHELASTIC_ERROR_FILE",
-        ]
-
-        for dist_key in dist_keys:
-            del os.environ[dist_key]
-
-        self.model_name = model
-        self.tensor_parallel_size = tensor_parallel_size
-        self.gpu_memory_utilization = gpu_memory_utilization
-        self.llm = None
-
-    def initialize(self):
-        self.llm = LLM(
-            model=self.model_name,
-            tensor_parallel_size=self.tensor_parallel_size,
-            gpu_memory_utilization=self.gpu_memory_utilization,
-            worker_cls=MyWorker,
-        )
-
-    def generate(self, prompts, sampling_params):
-        outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
-        return outputs
-
-
 def stateless_init_process_group(master_address, master_port, rank, world_size, device):
     """
     vLLM provides `StatelessProcessGroup` to create a process group
@@ -173,15 +102,6 @@ class MyWorker(Worker):
         self.model_update_group.broadcast(weight, src=0, stream=torch.cuda.current_stream())
         self.model_runner.model.load_weights(weights=[(name, weight)])
         del weight
-
-    def check_weights_changed(self):
-        """
-        Check if the weights are updated to 0.
-        """
-        weights_updated = True
-        for name, p in self.model_runner.model.named_parameters():
-            weights_updated = weights_updated and torch.allclose(p, torch.zeros_like(p))
-        return weights_updated
 
 
 class GRPOTrainer(Trainer):
@@ -463,6 +383,76 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
+
+                    @ray.remote(num_gpus=self.args.vllm_tensor_parallel_size)
+                    class vLLMActor:
+                        """
+                        A Ray remote actor class for managing and interacting with a vLLM instance.
+
+                        Attributes:
+                            llm (LLM): An instance of the LLM class initialized with the provided parameters.
+
+                        Methods:
+                            __init__(model: str, cuda_devices: str, tensor_parallel_size: int, gpu_memory_utilization: float):
+                                Initializes the vLLMActor with the specified model, CUDA devices, tensor parallel size, and GPU memory utilization.
+
+                            generate(prompts, sampling_params):
+                                Generates outputs from the LLM based on the provided prompts and sampling parameters.
+
+                            ping():
+                                Returns a readiness status message.
+
+                            load_weights(state_dict):
+                                Loads the model weights from the provided state dictionary.
+                        """
+
+                        def __init__(
+                            self,
+                            model: str,
+                            cuda_devices: str,
+                            tensor_parallel_size: int,
+                            gpu_memory_utilization: float,
+                        ):
+                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+
+                            dist_keys = [
+                                "RANK",
+                                "LOCAL_RANK",
+                                "WORLD_SIZE",
+                                "LOCAL_WORLD_SIZE",
+                                "GROUP_RANK",
+                                "ROLE_RANK",
+                                "ROLE_NAME",
+                                "OMP_NUM_THREADS",
+                                "MASTER_ADDR",
+                                "MASTER_PORT",
+                                "TORCHELASTIC_USE_AGENT_STORE",
+                                "TORCHELASTIC_MAX_RESTARTS",
+                                "TORCHELASTIC_RUN_ID",
+                                "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+                                "TORCHELASTIC_ERROR_FILE",
+                            ]
+
+                            for dist_key in dist_keys:
+                                del os.environ[dist_key]
+
+                            self.model_name = model
+                            self.tensor_parallel_size = tensor_parallel_size
+                            self.gpu_memory_utilization = gpu_memory_utilization
+                            self.llm = None
+
+                        def initialize(self):
+                            self.llm = LLM(
+                                model=self.model_name,
+                                tensor_parallel_size=self.tensor_parallel_size,
+                                gpu_memory_utilization=self.gpu_memory_utilization,
+                                worker_cls=MyWorker,
+                            )
+
+                        def generate(self, prompts, sampling_params):
+                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
+                            return outputs
+
 
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
