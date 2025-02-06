@@ -189,13 +189,6 @@ class GRPOConfig(TrainingArguments):
         default=0.04,
         metadata={"help": "KL coefficient."},
     )
-    use_ray: Optional[bool] = field(
-        default=False,
-        metadata={
-            "help": "Whether to use Ray for distributed training. If set to `True`, ensure that Ray is installed "
-            "(`pip install ray`)."
-        },
-    )
     logit_computation_mini_batch_size: int = field(
         default=0,
         metadata={

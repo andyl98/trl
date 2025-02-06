@@ -398,110 +398,61 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
                     os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
                     
-                    if self.args.use_ray:
-                        ray.init()
+                    ray.init()
 
-                        @ray.remote(num_gpus=vllm_cuda_devices_len)
-                        class vLLMActor:
-                            """
-                            A Ray remote actor class for managing and interacting with a vLLM instance.
-
-                            Attributes:
-                                llm (LLM): An instance of the LLM class initialized with the provided parameters.
-
-                            Methods:
-                                __init__(model: str, cuda_devices: str, tensor_parallel_size: int, gpu_memory_utilization: float):
-                                    Initializes the vLLMActor with the specified model, CUDA devices, tensor parallel size, and GPU memory utilization.
-
-                                generate(prompts, sampling_params):
-                                    Generates outputs from the LLM based on the provided prompts and sampling parameters.
-
-                                ping():
-                                    Returns a readiness status message.
-
-                                load_weights(state_dict):
-                                    Loads the model weights from the provided state dictionary.
-                            """
-
-                            def __init__(
-                                self,
-                                model: str,
-                                cuda_devices: str,
-                                tensor_parallel_size: int,
-                                gpu_memory_utilization: float,
-                            ):
-                                os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
-                                os.environ["NCCL_CUMEM_ENABLE"] = "0"
-                                os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-                                
-                                dist_keys = [
-                                    # "RANK",
-                                    # "LOCAL_RANK",
-                                    # "WORLD_SIZE",
-                                    # "LOCAL_WORLD_SIZE",
-                                    # "GROUP_RANK",
-                                    # "ROLE_RANK",
-                                    # "ROLE_NAME",
-                                    # "OMP_NUM_THREADS",
-                                    # "MASTER_ADDR",
-                                    # "MASTER_PORT",
-                                    "TORCHELASTIC_USE_AGENT_STORE",
-                                    # "TORCHELASTIC_MAX_RESTARTS",
-                                    # "TORCHELASTIC_RUN_ID",
-                                    # "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-                                    # "TORCHELASTIC_ERROR_FILE",
-                                ]
-
-                                for dist_key in dist_keys:
-                                    print(f"Removing {dist_key}")
-                                    print(f"Original value: {os.environ.get(dist_key)}")
-                                    del os.environ[dist_key]
-
-                                self.model_name = model
-                                self.tensor_parallel_size = tensor_parallel_size
-                                self.gpu_memory_utilization = gpu_memory_utilization
-                                self.llm = None
-
-                            def initialize(self):
-                                self.llm = LLM(
-                                    model=self.model_name,
-                                    tensor_parallel_size=self.tensor_parallel_size,
-                                    gpu_memory_utilization=self.gpu_memory_utilization,
-                                    worker_cls=MyWorker,
-                                    distributed_executor_backend="mp",
-                                    disable_custom_all_reduce=False,
-                                )
-
-                            def generate(self, prompts, sampling_params):
-                                outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
-                                return outputs
+                    @ray.remote(num_gpus=vllm_cuda_devices_len)
+                    class vLLMActor:
+                        """
+                        A Ray remote actor class for managing and interacting with a vLLM instance.
+                        """
+                        def __init__(
+                            self,
+                            model: str,
+                            cuda_devices: str,
+                            tensor_parallel_size: int,
+                            gpu_memory_utilization: float,
+                        ):
+                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+                            os.environ["NCCL_CUMEM_ENABLE"] = "0"
+                            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
                             
-                            def collective_rpc(self, func_name, args):
-                                return getattr(self.llm, func_name)(*args)
+                            dist_keys = [
+                                "TORCHELASTIC_USE_AGENT_STORE",
+                            ]
 
-                        self.vllm_actor = vLLMActor.remote(
-                            model=model.name_or_path,
-                            cuda_devices=vllm_device,
-                            tensor_parallel_size=vllm_cuda_devices_len,
-                            gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
-                        )
-                        print("vLLM actor initializing")
+                            for dist_key in dist_keys:
+                                del os.environ[dist_key]
 
-                        ray.get(self.vllm_actor.initialize.remote())
-                        print("vLLM actor initialized")
+                            self.model_name = model
+                            self.tensor_parallel_size = tensor_parallel_size
+                            self.gpu_memory_utilization = gpu_memory_utilization
+                            self.llm = None
 
-                    else:
-                        world_size_patch = patch("torch.distributed.get_world_size", return_value=self.args.vllm_tensor_parallel_size)
-                        profiling_patch = patch(
-                            "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
-                            return_value=None,
-                        )
-                        with world_size_patch, profiling_patch:
+                        def initialize(self):
                             self.llm = LLM(
-                                model=model.name_or_path,
-                                gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
-                                tensor_parallel_size=vllm_cuda_devices_len,
+                                model=self.model_name,
+                                tensor_parallel_size=self.tensor_parallel_size,
+                                gpu_memory_utilization=self.gpu_memory_utilization,
+                                worker_cls=MyWorker,
+                                distributed_executor_backend="mp",
+                                disable_custom_all_reduce=False,
                             )
+
+                        def generate(self, prompts, sampling_params):
+                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
+                            return outputs
+                        
+                        def collective_rpc(self, func_name, args):
+                            return getattr(self.llm, func_name)(*args)
+
+                    self.vllm_actor = vLLMActor.remote(
+                        model=model.name_or_path,
+                        cuda_devices=vllm_device,
+                        tensor_parallel_size=vllm_cuda_devices_len,
+                        gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
+                    )
+                    ray.get(self.vllm_actor.initialize.remote())
+                    print("vLLM actor initialized")
 
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
@@ -582,7 +533,7 @@ class GRPOTrainer(Trainer):
 
                 if self.accelerator.is_main_process:
                     print("Updating vllm model weights...")
-                    if self.args.vllm_tensor_parallel_size == 1 and not self.args.use_ray:
+                    if self.args.vllm_tensor_parallel_size == 1:
                         llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
                         llm_model.load_weights(state_dict.items())
                     else:
