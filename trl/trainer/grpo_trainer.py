@@ -424,19 +424,20 @@ class GRPOTrainer(Trainer):
                             tensor_parallel_size: int,
                             gpu_memory_utilization: float,
                         ):
-                            # os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
-
+                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+                            os.environ["NCCL_CUMEM_ENABLE"] = "0"
+                            
                             dist_keys = [
-                                "RANK",
-                                "LOCAL_RANK",
-                                "WORLD_SIZE",
-                                "LOCAL_WORLD_SIZE",
-                                "GROUP_RANK",
-                                "ROLE_RANK",
-                                "ROLE_NAME",
-                                "OMP_NUM_THREADS",
-                                # "MASTER_ADDR",
-                                # "MASTER_PORT",
+                                # "RANK",
+                                # "LOCAL_RANK",
+                                # "WORLD_SIZE",
+                                # "LOCAL_WORLD_SIZE",
+                                # "GROUP_RANK",
+                                # "ROLE_RANK",
+                                # "ROLE_NAME",
+                                # "OMP_NUM_THREADS",
+                                "MASTER_ADDR",
+                                "MASTER_PORT",
                                 # "TORCHELASTIC_USE_AGENT_STORE",
                                 # "TORCHELASTIC_MAX_RESTARTS",
                                 # "TORCHELASTIC_RUN_ID",
@@ -461,6 +462,7 @@ class GRPOTrainer(Trainer):
                                 gpu_memory_utilization=self.gpu_memory_utilization,
                                 worker_cls=MyWorker,
                                 distributed_executor_backend="mp",
+                                disable_custom_all_reduce=False,
                             )
 
                         def generate(self, prompts, sampling_params):
