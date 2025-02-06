@@ -96,6 +96,13 @@ class MyWorker(Worker):
 
     def init_weight_update_group(self, master_address, master_port, rank_offset, world_size):
         rank = get_world_group().rank + rank_offset
+
+        print("Inside MyWorker")
+        print(f"Master address: {master_address}")
+        print(f"Master port: {master_port}")
+        print(f"Rank: {rank}")
+        print(f"World size: {world_size}")
+
         self.model_update_group = stateless_init_process_group(
             master_address,
             master_port,
