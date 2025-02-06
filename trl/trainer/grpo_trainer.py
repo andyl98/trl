@@ -491,7 +491,7 @@ class GRPOTrainer(Trainer):
                         print("vLLM actor initialized")
 
                     else:
-                        world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
+                        world_size_patch = patch("torch.distributed.get_world_size", return_value=self.args.vllm_tensor_parallel_size)
                         profiling_patch = patch(
                             "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
                             return_value=None,
