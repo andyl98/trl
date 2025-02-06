@@ -427,14 +427,14 @@ class GRPOTrainer(Trainer):
                             # os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
                             dist_keys = [
-                                # "RANK",
-                                # "LOCAL_RANK",
-                                # "WORLD_SIZE",
-                                # "LOCAL_WORLD_SIZE",
-                                # "GROUP_RANK",
-                                # "ROLE_RANK",
-                                # "ROLE_NAME",
-                                # "OMP_NUM_THREADS",
+                                "RANK",
+                                "LOCAL_RANK",
+                                "WORLD_SIZE",
+                                "LOCAL_WORLD_SIZE",
+                                "GROUP_RANK",
+                                "ROLE_RANK",
+                                "ROLE_NAME",
+                                "OMP_NUM_THREADS",
                                 # "MASTER_ADDR",
                                 # "MASTER_PORT",
                                 # "TORCHELASTIC_USE_AGENT_STORE",
@@ -445,6 +445,8 @@ class GRPOTrainer(Trainer):
                             ]
 
                             for dist_key in dist_keys:
+                                print(f"Removing {dist_key}")
+                                print(f"Original value: {os.environ.get(dist_key)}")
                                 del os.environ[dist_key]
 
                             self.model_name = model
