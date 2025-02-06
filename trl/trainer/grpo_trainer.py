@@ -385,11 +385,11 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
 
-                    # os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
+                    os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
                     
-                    ray.init(num_gpus=self.args.vllm_tensor_parallel_size)
+                    ray.init()
 
-                    @ray.remote(num_gpus=self.args.vllm_tensor_parallel_size)
+                    @ray.remote(num_gpus=vllm_cuda_devices_len)
                     class vLLMActor:
                         """
                         A Ray remote actor class for managing and interacting with a vLLM instance.
@@ -465,7 +465,7 @@ class GRPOTrainer(Trainer):
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
-                        tensor_parallel_size=self.args.vllm_tensor_parallel_size,
+                        tensor_parallel_size=vllm_cuda_devices_len,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
                     print("vLLM actor initializing")
