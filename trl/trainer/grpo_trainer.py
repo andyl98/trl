@@ -65,6 +65,7 @@ if is_wandb_available():
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
 RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
 
+
 def stateless_init_process_group(master_address, master_port, rank, world_size, device):
     """
     vLLM provides `StatelessProcessGroup` to create a process group
@@ -453,7 +454,6 @@ class GRPOTrainer(Trainer):
                             outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
                             return outputs
 
-
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
@@ -551,13 +551,18 @@ class GRPOTrainer(Trainer):
                         # Only set up communication and broadcast from main process
                         master_address = get_ip()
                         master_port = get_open_port()
+                        world_size = 1 + self.args.vllm_tensor_parallel_size
+
+                        print(f"Master address: {master_address}")
+                        print(f"Master port: {master_port}")
+                        print(f"World size: {world_size}")
 
                         # Initialize process group only for rank 0 and vLLM processes
                         model_update_group = stateless_init_process_group(
                             master_address,
                             master_port,
                             rank=0,  # Just rank 0 for training
-                            world_size=1 + self.args.vllm_tensor_parallel_size,  # rank 0 + vLLM processes
+                            world_size=world_size,  # rank 0 + vLLM processes
                             device=self.accelerator.device,
                         )
 
@@ -567,9 +572,6 @@ class GRPOTrainer(Trainer):
                             args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
                         )
                         ray.get(handle)
-
-                        print(f"Master address: {master_address}")
-                        print(f"Master port: {master_port}")
 
                         # Broadcast weights from rank 0 to vLLM processes
                         for name, param in state_dict.items():
