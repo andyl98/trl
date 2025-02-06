@@ -458,8 +458,8 @@ class GRPOTrainer(Trainer):
                             outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
                             return outputs
                         
-                        def collective_rpc(self, func_name, args, kwargs):
-                            return getattr(self.llm, func_name)(*args, **kwargs)
+                        def collective_rpc(self, func_name, args):
+                            return getattr(self.llm, func_name)(*args)
 
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
