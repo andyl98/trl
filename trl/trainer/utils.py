@@ -1728,6 +1728,7 @@ def compute_logps_with_prompt_cache(
         mini_batch_token_log_prob = torch.gather(mini_batch_log_probs, dim=-1, index=mini_batch_index).squeeze(-1)
 
         completion_token_logps.append(mini_batch_token_log_prob)
+        del mini_batch_token_log_prob
 
     # Combine results
     all_completion_token_logps = torch.cat(completion_token_logps, dim=0)
