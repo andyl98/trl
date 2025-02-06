@@ -25,8 +25,10 @@ import torch
 import torch.utils.data
 import transformers
 from accelerate.utils import broadcast_object_list, gather_object
+from accelerate.utils.other import is_compiled_module
 from datasets import Dataset, IterableDataset
 from packaging import version
+from torch import nn
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -110,7 +112,6 @@ class MyWorker(Worker):
             world_size,
             self.device,
         )
-
 
     def update_weight(self, name, dtype, shape):
         weight = torch.empty(shape, dtype=dtype, device="cuda")
@@ -397,7 +398,7 @@ class GRPOTrainer(Trainer):
 
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
                     os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
-                    
+
                     ray.init()
 
                     @ray.remote(num_gpus=vllm_cuda_devices_len)
@@ -405,6 +406,7 @@ class GRPOTrainer(Trainer):
                         """
                         A Ray remote actor class for managing and interacting with a vLLM instance.
                         """
+
                         def __init__(
                             self,
                             model: str,
@@ -415,7 +417,7 @@ class GRPOTrainer(Trainer):
                             os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
                             os.environ["NCCL_CUMEM_ENABLE"] = "0"
                             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-                            
+
                             dist_keys = [
                                 "TORCHELASTIC_USE_AGENT_STORE",
                             ]
@@ -441,7 +443,7 @@ class GRPOTrainer(Trainer):
                         def generate(self, prompts, sampling_params):
                             outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
                             return outputs
-                        
+
                         def collective_rpc(self, func_name, args):
                             return getattr(self.llm, func_name)(*args)
 
@@ -528,8 +530,13 @@ class GRPOTrainer(Trainer):
         if self.args.use_vllm:
             # First, have main process load weights if needed
             if self.state.global_step != self._last_loaded_step:
-                with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
-                    state_dict = unwrapped_model.state_dict()
+                with unwrap_model_for_generation(
+                    self.model, self.accelerator, gather_deepspeed3_params=self.args.ds3_gather_for_generation
+                ) as unwrapped_model:
+                    if is_compiled_module(unwrapped_model):
+                        state_dict = unwrapped_model._orig_mod.state_dict()
+                    else:
+                        state_dict = unwrapped_model.state_dict()
 
                 if self.accelerator.is_main_process:
                     print("Updating vllm model weights...")
@@ -553,9 +560,9 @@ class GRPOTrainer(Trainer):
                             "init_weight_update_group",
                             args=(master_address, master_port, 1, world_size),
                         )
-                        
+
                         print("vLLM weight update handle created")
-                        
+
                         # Initialize process group only for rank 0 and vLLM processes
                         model_update_group = stateless_init_process_group(
                             master_address,
@@ -736,7 +743,7 @@ class GRPOTrainer(Trainer):
         for i, (reward_func, reward_processing_class) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes)
         ):
-            if isinstance(reward_func, PreTrainedModel):
+            if isinstance(reward_func, nn.Module):
                 if is_conversational(inputs[0]):
                     messages = [{"messages": p + c} for p, c in zip(prompts, completions)]
                     texts = [apply_chat_template(x, reward_processing_class)["text"] for x in messages]
@@ -781,7 +788,7 @@ class GRPOTrainer(Trainer):
 
         reward_per_func = self.accelerator.gather_for_metrics(rewards_per_func).mean(0)
         for i, reward_func in enumerate(self.reward_funcs):
-            if isinstance(reward_func, PreTrainedModel):
+            if isinstance(reward_func, nn.Module):
                 reward_func_name = reward_func.config._name_or_path.split("/")[-1]
             else:
                 reward_func_name = reward_func.__name__
