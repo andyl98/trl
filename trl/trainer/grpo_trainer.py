@@ -568,6 +568,8 @@ class GRPOTrainer(Trainer):
                             device=self.accelerator.device,
                         )
 
+                        print("Model update group initialized")
+
                         # Set up vLLM side
                         handle = self.vllm_actor.llm.collective_rpc.remote(
                             "init_weight_update_group",
