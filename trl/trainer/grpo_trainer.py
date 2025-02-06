@@ -433,6 +433,7 @@ class GRPOTrainer(Trainer):
                         ):
                             os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
                             os.environ["NCCL_CUMEM_ENABLE"] = "0"
+                            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
                             
                             dist_keys = [
                                 # "RANK",
@@ -445,7 +446,7 @@ class GRPOTrainer(Trainer):
                                 # "OMP_NUM_THREADS",
                                 # "MASTER_ADDR",
                                 # "MASTER_PORT",
-                                "TORCHELASTIC_USE_AGENT_STORE",
+                                # "TORCHELASTIC_USE_AGENT_STORE",
                                 # "TORCHELASTIC_MAX_RESTARTS",
                                 # "TORCHELASTIC_RUN_ID",
                                 "TORCH_NCCL_ASYNC_ERROR_HANDLING",
