@@ -439,10 +439,10 @@ class GRPOTrainer(Trainer):
                                 # "MASTER_ADDR",
                                 # "MASTER_PORT",
                                 "TORCHELASTIC_USE_AGENT_STORE",
-                                "TORCHELASTIC_MAX_RESTARTS",
-                                "TORCHELASTIC_RUN_ID",
+                                # "TORCHELASTIC_MAX_RESTARTS",
+                                # "TORCHELASTIC_RUN_ID",
                                 "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-                                "TORCHELASTIC_ERROR_FILE",
+                                # "TORCHELASTIC_ERROR_FILE",
                             ]
 
                             for dist_key in dist_keys:
