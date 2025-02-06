@@ -40,6 +40,8 @@ from transformers import (
 )
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import is_peft_available
+from ray.util.placement_group import placement_group
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from ..data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from ..import_utils import is_vllm_available
@@ -51,7 +53,12 @@ if is_peft_available():
     from peft import PeftConfig, get_peft_model
 
 if is_vllm_available():
-    from vllm import LLM, SamplingParams
+    from vllm import LLM, SamplingParams, configure_as_vllm_process
+    from vllm.utils import get_ip, get_open_port
+    from vllm.worker.worker import Worker
+    from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
+    from vllm.distributed.utils import StatelessProcessGroup
+    from vllm.distributed.parallel_state import get_world_group
 
 if is_wandb_available():
     import wandb
@@ -123,19 +130,60 @@ class vLLMActor:
             model=self.model_name,
             tensor_parallel_size=self.tensor_parallel_size,
             gpu_memory_utilization=self.gpu_memory_utilization,
+            worker_cls=MyWorker,
         )
 
     def generate(self, prompts, sampling_params):
         outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
         return outputs
 
-    def ping(self):
-        return "ready"
 
-    def load_weights(self, state_dict):
-        llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
-        llm_model.load_weights(state_dict.items())
-        print("Weights loaded successfully")
+def stateless_init_process_group(master_address, master_port, rank, world_size, device):
+    """
+    vLLM provides `StatelessProcessGroup` to create a process group
+    without considering the global process group in torch.distributed.
+    It is recommended to create `StatelessProcessGroup`, and then initialize
+    the data-plane communication (NCCL) between external (train processes)
+    and vLLM workers.
+    """
+    pg = StatelessProcessGroup.create(host=master_address, port=master_port, rank=rank, world_size=world_size)
+    pynccl = PyNcclCommunicator(pg, device=device)
+    return pynccl
+
+
+class MyWorker(Worker):
+    """
+    The `MyWorker` class inherits from `Worker` to provide custom functions.
+    For simplicity, we define the `MyWorker` class in this self-contained
+    script. Normally, we should define the `MyWorker` class in a separate
+    file and pass the qualified name of the class to the `worker_cls`
+    parameter.
+    """
+
+    def init_weight_update_group(self, master_address, master_port, rank_offset, world_size):
+        rank = get_world_group().rank + rank_offset
+        self.model_update_group = stateless_init_process_group(
+            master_address,
+            master_port,
+            rank,
+            world_size,
+            self.device,
+        )
+
+    def update_weight(self, name, dtype, shape):
+        weight = torch.empty(shape, dtype=dtype, device="cuda")
+        self.model_update_group.broadcast(weight, src=0, stream=torch.cuda.current_stream())
+        self.model_runner.model.load_weights(weights=[(name, weight)])
+        del weight
+
+    def check_weights_changed(self):
+        """
+        Check if the weights are updated to 0.
+        """
+        weights_updated = True
+        for name, p in self.model_runner.model.named_parameters():
+            weights_updated = weights_updated and torch.allclose(p, torch.zeros_like(p))
+        return weights_updated
 
 
 class GRPOTrainer(Trainer):
@@ -417,22 +465,28 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
                     ray.init()
-                    print("Ray initialized")
 
-                    self.vllm_actor = vLLMActor.remote(
+                    pg = placement_group([{"GPU": 1, "CPU": 1}] * self.args.vllm_tensor_parallel_size)
+                    ray.get(pg.ready())
+
+                    scheduling_strategy = PlacementGroupSchedulingStrategy(
+                        placement_group=pg, placement_group_capture_child_tasks=True, placement_group_bundle_index=0
+                    )
+
+                    self.vllm_actor = vLLMActor.options(
+                        num_cpus=0,
+                        num_gpus=0,
+                        scheduling_strategy=scheduling_strategy,
+                    ).remote(
                         model=model.name_or_path,
                         cuda_devices=vllm_device,
                         tensor_parallel_size=self.args.vllm_tensor_parallel_size,
                         gpu_memory_utilization=self.args.vllm_gpu_memory_utilization,
                     )
-                    print("vLLM actor initialized")
+                    print("vLLM actor initializing")
 
                     ray.get(self.vllm_actor.initialize.remote())
-                    print("vLLM actor LLM initialized")
-
-                    # Block until the vLLM actor is fully loaded
-                    ray.get(self.vllm_actor.ping.remote())
-                    print("vLLM actor ready")
+                    print("vLLM actor initialized")
 
                 self.sampling_params = SamplingParams(
                     n=self.num_generations,
@@ -517,11 +571,51 @@ class GRPOTrainer(Trainer):
                         llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
                         llm_model.load_weights(state_dict.items())
                     else:
-                        print("Converting state dict to cpu...")
-                        # try move the state dict to cpu before passing to ray
-                        cpu_state_dict = {k: v.cpu() for k, v in state_dict.items()}
-                        print("Loading weights in vllm actor...")
-                        ray.get(self.vllm_actor.load_weights.remote(cpu_state_dict))
+                        # set up the communication between the training process
+                        # and the inference engine.
+                        master_address = get_ip()
+                        master_port = get_open_port()
+
+                        current_rank = self.accelerator.process_index  # Gets the current process rank (0-5)
+                        total_world_size = (
+                            self.accelerator.num_processes  # Number of training GPUs (6)
+                            + self.args.vllm_tensor_parallel_size  # Number of vLLM GPUs
+                        )
+
+                        # Initialize the process group on training side
+                        model_update_group = stateless_init_process_group(
+                            master_address,
+                            master_port,
+                            rank=current_rank,  # Use current process rank (0-5)
+                            world_size=total_world_size,  # Total processes = training GPUs + vLLM GPUs
+                            device=torch.device(f"cuda:{current_rank}"),  # Use corresponding GPU
+                        )
+
+                        # Initialize weight update group on vLLM side
+                        # rank_offset should be the number of training processes
+                        handle = self.vllm_actor.llm.collective_rpc.remote(
+                            "init_weight_update_group",
+                            args=(
+                                master_address,
+                                master_port,
+                                self.accelerator.num_processes,  # rank_offset = number of training GPUs (6)
+                                total_world_size,
+                            ),
+                        )
+
+                        ray.get(handle)
+
+                        # sync weight from the training process to the inference engine.
+                        for name, p in unwrapped_model.named_parameters():
+                            handle = self.vllm_actor.llm.collective_rpc.remote(
+                                "update_weight", args=(name, p.dtype, p.shape)
+                            )
+                            model_update_group.broadcast(p, src=0, stream=torch.cuda.current_stream())
+                            ray.get(handle)
+
+                        # check if the weights are updated.
+                        assert all(ray.get(self.vllm_actor.llm.collective_rpc.remote("check_weights_changed")))
+
                     print("Weights loaded successfully")
 
                 self._last_loaded_step = self.state.global_step
