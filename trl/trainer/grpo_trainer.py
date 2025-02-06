@@ -505,30 +505,31 @@ class GRPOTrainer(Trainer):
         # Generate completions using either vLLM or regular generation
         start_time = time.perf_counter()
 
-        if self.accelerator.is_main_process:
-            print("Generating completions...")
-
         if self.args.use_vllm:
             # First, have main process load weights if needed
             if self.state.global_step != self._last_loaded_step:
                 with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                     state_dict = unwrapped_model.state_dict()
 
-                if self.args.vllm_tensor_parallel_size == 1:
-                    if self.accelerator.is_main_process:
+                if self.accelerator.is_main_process:
+                    print("Updating vllm model weights...")
+                    if self.args.vllm_tensor_parallel_size == 1:
                         llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
                         llm_model.load_weights(state_dict.items())
-                else:
-                    if self.accelerator.is_main_process:
+                    else:
+                        print("Converting state dict to cpu...")
                         # try move the state dict to cpu before passing to ray
                         cpu_state_dict = {k: v.cpu() for k, v in state_dict.items()}
+                        print("Loading weights in vllm actor...")
                         ray.get(self.vllm_actor.load_weights.remote(cpu_state_dict))
+                    print("Weights loaded successfully")
 
                 self._last_loaded_step = self.state.global_step
 
             # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
             all_prompts_text = gather_object(prompts_text)
             if self.accelerator.is_main_process:
+                print("Generating completions...")
                 if self.args.vllm_tensor_parallel_size == 1:
                     outputs = self.llm.generate(all_prompts_text, sampling_params=self.sampling_params, use_tqdm=False)
                 else:
