@@ -98,6 +98,7 @@ class MyWorker(Worker):
             self.device,
         )
 
+
     def update_weight(self, name, dtype, shape):
         weight = torch.empty(shape, dtype=dtype, device="cuda")
         self.model_update_group.broadcast(weight, src=0, stream=torch.cuda.current_stream())
@@ -456,6 +457,9 @@ class GRPOTrainer(Trainer):
                         def generate(self, prompts, sampling_params):
                             outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
                             return outputs
+                        
+                        def collective_rpc(self, func_name, args, kwargs):
+                            return getattr(self.llm, func_name)(*args, **kwargs)
 
                     self.vllm_actor = vLLMActor.remote(
                         model=model.name_or_path,
@@ -562,7 +566,7 @@ class GRPOTrainer(Trainer):
                         print(f"Device: {self.accelerator.device}")
 
                         # Set up vLLM side
-                        handle = self.vllm_actor.llm.collective_rpc.remote(
+                        handle = self.vllm_actor.collective_rpc.remote(
                             "init_weight_update_group",
                             args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
                         )
