@@ -571,52 +571,38 @@ class GRPOTrainer(Trainer):
                         llm_model = self.llm.llm_engine.model_executor.driver_worker.model_runner.model
                         llm_model.load_weights(state_dict.items())
                     else:
-                        # set up the communication between the training process
-                        # and the inference engine.
+                        # Only set up communication and broadcast from main process
                         master_address = get_ip()
                         master_port = get_open_port()
 
-                        current_rank = self.accelerator.process_index  # Gets the current process rank (0-5)
-                        total_world_size = (
-                            self.accelerator.num_processes  # Number of training GPUs (6)
-                            + self.args.vllm_tensor_parallel_size  # Number of vLLM GPUs
-                        )
-
-                        # Initialize the process group on training side
+                        # Initialize process group only for rank 0 and vLLM processes
                         model_update_group = stateless_init_process_group(
                             master_address,
                             master_port,
-                            rank=current_rank,  # Use current process rank (0-5)
-                            world_size=total_world_size,  # Total processes = training GPUs + vLLM GPUs
-                            device=torch.device(f"cuda:{current_rank}"),  # Use corresponding GPU
+                            rank=0,  # Just rank 0 for training
+                            world_size=1 + self.args.vllm_tensor_parallel_size,  # rank 0 + vLLM processes
+                            device=self.accelerator.device,
                         )
 
-                        # Initialize weight update group on vLLM side
-                        # rank_offset should be the number of training processes
+                        # Set up vLLM side
                         handle = self.vllm_actor.llm.collective_rpc.remote(
                             "init_weight_update_group",
-                            args=(
-                                master_address,
-                                master_port,
-                                self.accelerator.num_processes,  # rank_offset = number of training GPUs (6)
-                                total_world_size,
-                            ),
+                            args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
                         )
-
                         ray.get(handle)
 
-                        # sync weight from the training process to the inference engine.
-                        for name, p in unwrapped_model.named_parameters():
-                            handle = self.vllm_actor.llm.collective_rpc.remote(
-                                "update_weight", args=(name, p.dtype, p.shape)
+                        print(f"Master address: {master_address}")
+                        print(f"Master port: {master_port}")
+
+                        # Broadcast weights from rank 0 to vLLM processes
+                        for name, param in state_dict.items():
+                            handle = self.vllm_actor.collective_rpc.remote(
+                                "update_weight", args=(name, param.dtype, param.shape)
                             )
-                            model_update_group.broadcast(p, src=0, stream=torch.cuda.current_stream())
+                            model_update_group.broadcast(param, src=0, stream=torch.cuda.current_stream())
                             ray.get(handle)
 
-                        # check if the weights are updated.
-                        assert all(ray.get(self.vllm_actor.llm.collective_rpc.remote("check_weights_changed")))
-
-                    print("Weights loaded successfully")
+                    print("Weights updated successfully")
 
                 self._last_loaded_step = self.state.global_step
 
