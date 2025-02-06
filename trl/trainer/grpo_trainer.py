@@ -385,8 +385,9 @@ class GRPOTrainer(Trainer):
                     print(f"Using {vllm_cuda_devices_len} GPUs for vLLM on devices {vllm_device}")
 
 
-                    os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
-                    ray.init()
+                    # os.environ["CUDA_VISIBLE_DEVICES"] = vllm_device
+                    
+                    ray.init(num_gpus=self.args.vllm_tensor_parallel_size)
 
                     @ray.remote(num_gpus=self.args.vllm_tensor_parallel_size)
                     class vLLMActor:
@@ -417,7 +418,7 @@ class GRPOTrainer(Trainer):
                             tensor_parallel_size: int,
                             gpu_memory_utilization: float,
                         ):
-                            # os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
                             dist_keys = [
                                 "RANK",
