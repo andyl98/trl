@@ -520,7 +520,9 @@ class GRPOTrainer(Trainer):
                         llm_model.load_weights(state_dict.items())
                 else:
                     if self.accelerator.is_main_process:
-                        ray.get(self.vllm_actor.load_weights.remote(state_dict))
+                        # try move the state dict to cpu before passing to ray
+                        cpu_state_dict = {k: v.cpu() for k, v in state_dict.items()}
+                        ray.get(self.vllm_actor.load_weights.remote(cpu_state_dict))
 
                 self._last_loaded_step = self.state.global_step
 
