@@ -618,7 +618,9 @@ class GRPOTrainer(Trainer):
             prompt_completion_ids = torch.cat([prompt_inputs_repeated, completion_ids], dim=1)
         else:
             # Regular generation path
-            with torch.no_grad(), unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
+            with torch.no_grad(), unwrap_model_for_generation(
+                model, self.accelerator, gather_deepspeed3_params=self.args.ds3_gather_for_generation
+            ) as unwrapped_model:
                 prompt_completion_ids = unwrapped_model.generate(
                     **prompt_inputs, generation_config=self.generation_config
                 )
