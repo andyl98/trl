@@ -81,7 +81,7 @@ def stateless_init_process_group(master_address, master_port, rank, world_size, 
     print("Creating PyNcclCommunicator")
     pynccl = PyNcclCommunicator(pg, device=device)
     print("PyNcclCommunicator created")
-    
+
     return pynccl
 
 
@@ -424,24 +424,24 @@ class GRPOTrainer(Trainer):
                             tensor_parallel_size: int,
                             gpu_memory_utilization: float,
                         ):
-                            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+                            # os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
 
                             dist_keys = [
-                                "RANK",
-                                "LOCAL_RANK",
-                                "WORLD_SIZE",
-                                "LOCAL_WORLD_SIZE",
-                                "GROUP_RANK",
-                                "ROLE_RANK",
-                                "ROLE_NAME",
-                                "OMP_NUM_THREADS",
-                                "MASTER_ADDR",
-                                "MASTER_PORT",
-                                "TORCHELASTIC_USE_AGENT_STORE",
-                                "TORCHELASTIC_MAX_RESTARTS",
-                                "TORCHELASTIC_RUN_ID",
-                                "TORCH_NCCL_ASYNC_ERROR_HANDLING",
-                                "TORCHELASTIC_ERROR_FILE",
+                                # "RANK",
+                                # "LOCAL_RANK",
+                                # "WORLD_SIZE",
+                                # "LOCAL_WORLD_SIZE",
+                                # "GROUP_RANK",
+                                # "ROLE_RANK",
+                                # "ROLE_NAME",
+                                # "OMP_NUM_THREADS",
+                                # "MASTER_ADDR",
+                                # "MASTER_PORT",
+                                # "TORCHELASTIC_USE_AGENT_STORE",
+                                # "TORCHELASTIC_MAX_RESTARTS",
+                                # "TORCHELASTIC_RUN_ID",
+                                # "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+                                # "TORCHELASTIC_ERROR_FILE",
                             ]
 
                             for dist_key in dist_keys:
@@ -462,7 +462,7 @@ class GRPOTrainer(Trainer):
                             )
 
                         def generate(self, prompts, sampling_params):
-                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=True)
+                            outputs = self.llm.generate(prompts, sampling_params, use_tqdm=False)
                             return outputs
                         
                         def collective_rpc(self, func_name, args):
