@@ -505,7 +505,8 @@ class GRPOTrainer(Trainer):
         # Generate completions using either vLLM or regular generation
         start_time = time.perf_counter()
 
-        print("Generating completions...")
+        if self.accelerator.is_main_process:
+            print("Generating completions...")
 
         if self.args.use_vllm:
             # First, have main process load weights if needed

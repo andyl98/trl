@@ -1726,11 +1726,8 @@ def compute_logps_with_prompt_cache(
         # Get the corresponding completion token ids and gather the logits for completion_ids w/ idx >= 1
         mini_batch_index = mini_batch_ids[:, 1:].unsqueeze(-1)  # (mini_batch_size, C-1, 1)
         mini_batch_token_log_prob = torch.gather(mini_batch_log_probs, dim=-1, index=mini_batch_index).squeeze(-1)
-        del mini_batch_log_probs
 
         completion_token_logps.append(mini_batch_token_log_prob)
-
-    del repeated_kv_cache, mini_batch_kv_caches, completion_token_logps   
 
     # Combine results
     all_completion_token_logps = torch.cat(completion_token_logps, dim=0)
