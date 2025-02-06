@@ -577,7 +577,8 @@ class GRPOTrainer(Trainer):
                         # Only set up communication and broadcast from main process
                         master_address = get_ip()
                         master_port = get_open_port()
-                        world_size = 1 + self.args.vllm_tensor_parallel_size
+                        # world_size = 1 + self.args.vllm_tensor_parallel_size
+                        world_size = 2
 
                         print(f"Master address: {master_address}")
                         print(f"Master port: {master_port}")
@@ -587,7 +588,7 @@ class GRPOTrainer(Trainer):
                         # Set up vLLM side
                         handle = self.vllm_actor.collective_rpc.remote(
                             "init_weight_update_group",
-                            args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
+                            args=(master_address, master_port, 1, world_size),
                         )
                         
                         print("vLLM weight update handle created")
