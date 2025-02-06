@@ -561,6 +561,14 @@ class GRPOTrainer(Trainer):
                         print(f"World size: {world_size}")
                         print(f"Device: {self.accelerator.device}")
 
+                        # Set up vLLM side
+                        handle = self.vllm_actor.llm.collective_rpc.remote(
+                            "init_weight_update_group",
+                            args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
+                        )
+                        
+                        print("vLLM weight update handle created")
+                        
                         # Initialize process group only for rank 0 and vLLM processes
                         model_update_group = stateless_init_process_group(
                             master_address,
@@ -572,14 +580,7 @@ class GRPOTrainer(Trainer):
 
                         print("Model update group initialized")
 
-                        # Set up vLLM side
-                        handle = self.vllm_actor.llm.collective_rpc.remote(
-                            "init_weight_update_group",
-                            args=(master_address, master_port, 1, 1 + self.args.vllm_tensor_parallel_size),
-                        )
                         ray.get(handle)
-
-                        print("vLLM weight update group initialized")
 
                         # Broadcast weights from rank 0 to vLLM processes
                         for name, param in state_dict.items():
