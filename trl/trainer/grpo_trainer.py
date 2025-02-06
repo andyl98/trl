@@ -448,7 +448,7 @@ class GRPOTrainer(Trainer):
                                 tensor_parallel_size=self.tensor_parallel_size,
                                 gpu_memory_utilization=self.gpu_memory_utilization,
                                 worker_cls=MyWorker,
-                                distributed_executor_backend="ray",
+                                distributed_executor_backend="mp",
                             )
 
                         def generate(self, prompts, sampling_params):
