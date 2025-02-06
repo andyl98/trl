@@ -53,7 +53,7 @@ if is_peft_available():
     from peft import PeftConfig, get_peft_model
 
 if is_vllm_available():
-    from vllm import LLM, SamplingParams, configure_as_vllm_process
+    from vllm import LLM, SamplingParams
     from vllm.utils import get_ip, get_open_port
     from vllm.worker.worker import Worker
     from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
